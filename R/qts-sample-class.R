@@ -1,12 +1,12 @@
 #' QTS Sample Class
 #'
 #' A collection of functions that implements the QTS sample class. It currently
-#' provides the `as_qts_sample()` function for QTS sample coercion of lists of
-#' \code{\link{qts}} objects and the `is_qts_sample()` function for checking if
-#' an object is a QTS sample.
+#' provides the [`as_qts_sample()`] function for QTS sample coercion of lists of
+#' [`qts`] objects, the [`is_qts_sample()`] function for checking if an object
+#' is a QTS sample and the subset operator.
 #'
 #' A QTS sample is a collection of quaternion time series (QTS), each of which
-#' is stored as a \code{\link[tibble]{tibble}} with 5 columns:
+#' is stored as a [`tibble::tibble`] with 5 columns:
 #' - `time`: A first column specifying the time points at which quaternions were
 #' collected;
 #' - `w`: A second column specifying the first coordinate of the collected
@@ -20,6 +20,10 @@
 #'
 #' @param x A list of [`tibble::tibble`]s, each of which with columns
 #'   `time`, `w`, `x`, `y` and `z`.
+#' @param i A valid expression to subset observations from a QTS sample.
+#' @param simplify A boolean value specifying whether the resulting subset
+#'   should be turned into a single QTS in case the subset is of size 1.
+#'   Defaults to `FALSE`.
 #'
 #' @return An object of class [`qts_sample`].
 #' @name qts_sample
@@ -29,12 +33,15 @@
 #' y <- as_qts_sample(x)
 #' is_qts_sample(x)
 #' is_qts_sample(y)
+#' x[1]
+#' x[1, simplify = TRUE]
 NULL
 
 #' @export
 #' @rdname qts_sample
 as_qts_sample <- function(x) {
   if (is_qts_sample(x)) return(x)
+  if (is_qts(x)) x <- list(x)
   if (!is.list(x))
     cli::cli_abort("The input {.arg x} should be a list.")
   x <- purrr::map_if(x, ~ !is_qts(.x), as_qts)
@@ -46,6 +53,49 @@ as_qts_sample <- function(x) {
 #' @rdname qts_sample
 is_qts_sample <- function(x) {
   "qts_sample" %in% class(x)
+}
+
+#' @export
+#' @rdname qts_sample
+"[.qts_sample" <- function(x, i, simplify = FALSE) {
+  if (missing(i)) return(x)
+  class(x) <- "list"
+  x <- x[i]
+  if (simplify && length(x) == 1) return(as_qts(x[[1]]))
+  as_qts_sample(x)
+}
+
+#' QTS Sample Concatenation
+#'
+#' @param x An object of class [`qts_sample`].
+#' @inheritParams base::append
+#' @param y Either an object of class [`qts_sample`] or an object of class
+#'   [`qts`].
+#' @param ... Extra arguments to be passed on to next methods.
+#'
+#' @export
+#' @examples
+#' append(vespa64$igp, vespa64$igp[1])
+#' append(vespa64$igp, vespa64$igp[[1]])
+append <- function(x, ...) {
+  UseMethod("append")
+}
+
+#' @export
+#' @rdname append
+append.default <- function(x, values, after = length(x), ...) {
+  base::append(x = x, values = values, after = after)
+}
+
+#' @export
+#' @rdname append
+append.qts_sample <- function(x, y, ...) {
+  if (missing(y)) return(x)
+  if (is_qts(y)) y <- as_qts_sample(y)
+  if (!is_qts_sample(y))
+    cli::cli_abort("The rhs object should be of class either {.cls qts} or {.cls qts_sample}.")
+  x[(length(x) + 1):(length(x) + length(y))] <- y
+  as_qts_sample(x)
 }
 
 #' QTS Random Sampling
@@ -103,14 +153,14 @@ rnorm_qts <- function(n, mean_qts, alpha = 0.01, beta = 0.001) {
 
 #' QTS Sample Centering and Standardization
 #'
-#' @param x An object of class \code{\link{qts_sample}} representing a sample of
-#'   observed QTS.
-#' @param center A boolean specifying whether to center the sample of QTS. If
-#'   set to `FALSE`, the original sample is returned, meaning that no
-#'   standardization is performed regardless of whether argument `standardize`
-#'   was set to `TRUE` or not. Defaults to `TRUE`.
-#' @param standardize A boolean specifying whether to standardize the sample of
-#'   QTS once they have been centered. Defaults to `TRUE`.
+#' @param x An object coercible into a numeric matrix or an object of class
+#'   [`qts_sample`] representing a sample of observed QTS.
+#' @param center A boolean specifying whether to center the sample. If set to
+#'   `FALSE`, the original sample is returned, meaning that no standardization
+#'   is performed regardless of whether argument `scale` was set to `TRUE` or
+#'   not. Defaults to `TRUE`.
+#' @param scale A boolean specifying whether to standardize the sample once it
+#'   has been centered. Defaults to `TRUE`.
 #' @param by_row A boolean specifying whether the QTS scaling should happen for
 #'   each data point (`by_row = TRUE`) or for each time point (`by_row =
 #'   FALSE`). Defaults to `FALSE`.
@@ -118,28 +168,40 @@ rnorm_qts <- function(n, mean_qts, alpha = 0.01, beta = 0.001) {
 #'   deviation used for standardizing the data should be stored in the output
 #'   object. Defaults to `FALSE` in which case only the list of properly
 #'   rescaled QTS is returned.
+#' @param ... Extra arguments passed on to next methods.
 #'
 #' @return A list of properly rescaled QTS stored as an object of class
-#'   \code{\link{qts_sample}} when `keep_summary_stats = FALSE`.
-#'   Otherwise a list with three components:
+#'   [`qts_sample`] when `keep_summary_stats = FALSE`. Otherwise a list with
+#'   three components:
 #' - `rescaled_sample`: a list of properly rescaled QTS stored as an object of
-#' class \code{\link{qts_sample}};
-#' - `mean`: a numeric vector with the quaternion Fréchet mean;
-#' - `sd`: a numeric vector with the quaternion Fréchet standard deviation.
+#' class [`qts_sample`];
+#' - `mean`: a list of numeric vectors storing the corresponding quaternion
+#' Fréchet means;
+#' - `sd`: a numeric vector storing the corresponding quaternion Fréchet
+#' standard deviations.
 #'
 #' @export
-#'
 #' @examples
-#' x <- scale_qts(vespa64$igp)
+#' x <- scale(vespa64$igp)
 #' x[[1]]
-scale_qts <- function(x,
-                      center = TRUE,
-                      standardize = TRUE,
-                      by_row = FALSE,
-                      keep_summary_stats = FALSE) {
-  if (!is_qts_sample(x))
-    cli::cli_abort("The input argument {.arg x} should be of class {.cls qts_sample}.")
+scale <- function(x, center = TRUE, scale = TRUE, ...) {
+  UseMethod("scale")
+}
 
+#' @export
+#' @rdname scale
+scale.default <- function(x, center = TRUE, scale = TRUE, ...) {
+  base::scale(x = x, center = center, scale = scale)
+}
+
+#' @export
+#' @rdname scale
+scale.qts_sample <- function(x,
+                             center = TRUE,
+                             scale = TRUE,
+                             by_row = FALSE,
+                             keep_summary_stats = FALSE,
+                             ...) {
   if (!center) {
     if (!keep_summary_stats) return(x)
     return(list(
@@ -158,9 +220,7 @@ scale_qts <- function(x,
       purrr::map(as_qts)
   }
 
-  std_data <- purrr::map(x, centring_qts,
-                         standardize = standardize,
-                         keep_summary_stats = TRUE)
+  std_data <- purrr::map(x, centring, standardize = scale, keep_summary_stats = TRUE)
   x <- purrr::map(std_data, "qts")
 
   if (!by_row) {
@@ -229,6 +289,9 @@ median.qts_sample <- function(x, na.rm = FALSE, ...) {
 #' @param highlighted A boolean vector specifying whether each QTS in the sample
 #'   should be hightlighted. Defaults to `NULL`, in which case no QTS is
 #'   hightlighted w.r.t. the others.
+#' @param with_animation A boolean value specifying whether to create a an
+#'   animated plot or a static [ggplot2::ggplot] object. Defaults to `FALSE`
+#'   which will create a static plot.
 #' @param ... Further arguments to be passed to methods.
 #'
 #' @return The [plot.qts_sample()] method does not return anything while the
@@ -240,34 +303,86 @@ median.qts_sample <- function(x, na.rm = FALSE, ...) {
 #' @examples
 #' plot(vespa64$igp)
 #' ggplot2::autoplot(vespa64$igp)
-plot.qts_sample <- function(x, memberships = NULL, highlighted = NULL, ...) {
-  print(autoplot(x, memberships = memberships, highlighted = highlighted, ...))
+plot.qts_sample <- function(x,
+                            memberships = NULL,
+                            highlighted = NULL,
+                            with_animation = FALSE,
+                            ...) {
+  print(autoplot(
+    x,
+    memberships = memberships,
+    highlighted = highlighted,
+    with_animation = with_animation,
+    ...
+  ))
 }
 
 #' @importFrom ggplot2 autoplot .data
 #' @export
 #' @rdname plot.qts_sample
-autoplot.qts_sample <- function(x, memberships = NULL, highlighted = NULL, ...) {
+autoplot.qts_sample <- function(x,
+                                memberships = NULL,
+                                highlighted = NULL,
+                                with_animation = FALSE,
+                                ...) {
   if (!is.null(memberships)) {
     if (length(memberships) != length(x))
-      cli::cli_abort("The length of the {.arg memberships} argument should match the number of QTS in the sample.")
+      cli::cli_abort("The length of the {.arg memberships} argument should match
+                     the number of QTS in the sample.")
     memberships <- as.factor(memberships)
   }
   if (!is.null(highlighted)) {
     if (length(highlighted) != length(x))
-      cli::cli_abort("The length of the {.arg highlighted} argument should match the number of QTS in the sample.")
+      cli::cli_abort("The length of the {.arg highlighted} argument should match
+                     the number of QTS in the sample.")
     if (!is.logical(highlighted))
       cli::cli_abort("The {.arg highlighted} argument should be a logical vector.")
   }
 
   n <- length(x)
   if (is.null(highlighted)) highlighted <- rep(FALSE, n)
-  if (is.null(memberships)) memberships <- as.factor(seq_len(n))
+  use_memberships <- FALSE
+  if (is.null(memberships))
+    memberships <- as.factor(seq_len(n))
+  else
+    use_memberships <- TRUE
 
-  data <- tibble::tibble(x, id = seq_len(n) , highlighted, memberships) |>
-    tidyr::unnest(.data$x) |>
-    tidyr::pivot_longer(cols = .data$w:.data$z)
+  data <- tibble::tibble(x, id = as.factor(seq_len(n)), highlighted, memberships) |>
+    tidyr::unnest("x")
 
+  if (with_animation) {
+    if (!requireNamespace("gganimate", quietly = TRUE))
+      cli::cli_abort("You first need to install the {.pkg gganimate} package to
+                     create animation plots.")
+    return(
+      data |>
+        tidyr::pivot_longer(cols = "x":"z") |>
+        ggplot2::ggplot(ggplot2::aes(
+          x = .data$w, y = .data$value,
+          group = .data$id,
+          colour = .data$memberships
+        )) +
+        ggplot2::geom_point() +
+        ggplot2::geom_line(alpha = 0.25) +
+        ggplot2::facet_wrap(ggplot2::vars(.data$name), nrow = 1) +
+        ggplot2::labs(
+          title = "QTS Sample",
+          x = expression(cos(theta / 2)),
+          y = expression(sin(theta / 2) %*% component),
+          colour = "Group"
+        ) +
+        ggplot2::theme_bw() +
+        ggplot2::theme(
+          aspect.ratio = 1,
+          legend.position = if (use_memberships) "top" else "none",
+          axis.text.x = ggplot2::element_text(angle = 90, hjust = 1, vjust = 0.5)
+        ) +
+        gganimate::transition_reveal(.data$time) +
+        gganimate::ease_aes()
+    )
+  }
+
+  data <- tidyr::pivot_longer(data, cols = "w":"z")
   p <- ggplot2::ggplot(data, ggplot2::aes(
       x = .data$time,
       y = .data$value,
