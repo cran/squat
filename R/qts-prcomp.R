@@ -22,7 +22,7 @@
 #' @export
 #'
 #' @examples
-#' res_pca <- prcomp(vespa64$igp)
+#' res_pca <- prcomp(vespa64$igp[1:16])
 prcomp.qts_sample <- function(x, M = 5, fit = FALSE, ...) {
   check_common_grid <- x |>
     purrr::map("time") |>
@@ -32,10 +32,10 @@ prcomp.qts_sample <- function(x, M = 5, fit = FALSE, ...) {
   if (check_common_grid > 0)
     cli::cli_abort("All input QTS should be evaluated on the same grid.")
   grid <- x[[1]]$time
-  npc_max <- min(length(x) - 1, length(grid))
+  npc_max <- min(length(x), length(grid)) - 1
   if (M > npc_max)
     cli::cli_abort("The maximum number of principal component is {npc_max}. Please choose a value of {.arg M} smaller or equal to that value.")
-  qts_log <- purrr::map(x, log_qts)
+  qts_log <- log(x)
   fd_x <- funData::funData(
     argvals = grid,
     X = qts_log |>
@@ -55,12 +55,17 @@ prcomp.qts_sample <- function(x, M = 5, fit = FALSE, ...) {
       purrr::reduce(rbind)
   )
   mfd <- funData::multiFunData(fd_x, fd_y, fd_z)
-  uniExpansions <- purrr::map(1:3, ~ list(type = "splines1D", k = npc_max))
+  uniExpansions <- purrr::map(1:3, ~ list(type = "splines1Dpen", k = npc_max))
   tpca <- MFPCA::MFPCA(mfd, M = M, uniExpansions = uniExpansions, fit = fit)
+  # uniExpansions <- purrr::map(1:3, ~ list(type = "splines1D", k = M))
+  # tpca <- MFPCA::MFPCA(mfd, M = M, uniExpansions = uniExpansions, fit = fit, approx.eigen = TRUE)
   if (M == npc_max)
     tot_var <- sum(tpca$values)
   else {
+    # uniExpansions <- purrr::map(1:3, ~ list(type = "splines1Dpen", k = npc_max))
     tpca_full <- MFPCA::MFPCA(mfd, M = npc_max, uniExpansions = uniExpansions, fit = FALSE)
+    # uniExpansions <- purrr::map(1:3, ~ list(type = "splines1D", k = npc_max))
+    # tpca_full <- MFPCA::MFPCA(mfd, M = npc_max, uniExpansions = uniExpansions, fit = FALSE, approx.eigen = TRUE)
     tot_var <- sum(tpca_full$values)
   }
   mean_qts <- tpca$meanFunction |>
@@ -69,7 +74,7 @@ prcomp.qts_sample <- function(x, M = 5, fit = FALSE, ...) {
     tibble::as_tibble()
   mean_qts$time <- grid
   mean_qts$w <- 0
-  mean_qts <- exp_qts(as_qts(mean_qts[c(4, 5, 1:3)]))
+  mean_qts <- exp(as_qts(mean_qts[c(4, 5, 1:3)]))
   res <- list(
     tpca = tpca,
     var_props = tpca$values / tot_var,
@@ -84,15 +89,19 @@ prcomp.qts_sample <- function(x, M = 5, fit = FALSE, ...) {
         y = .x[[2]],
         z = .x[[3]]
       ))) |>
-      purrr::map(exp_qts)
+      purrr::map(exp)
   )
   class(res) <- "prcomp_qts"
   res
 }
 
-#' QTS PCA Visualization
+#' Plot for `prcomp_qts` objects
 #'
-#' @param x An object of class `prcomp_qts` as produced by the
+#' This function creates a visualization of the results of the PCA applied on a
+#' sample of QTS and returns the corresponding [ggplot2::ggplot] object which
+#' enable further customization of the plot.
+#'
+#' @param object An object of class `prcomp_qts` as produced by the
 #'   [prcomp.qts_sample()] method.
 #' @param what A string specifying what kind of visualization the user wants to
 #'   perform. Choices are words starting with `PC` and ending with a PC number
@@ -106,12 +115,54 @@ prcomp.qts_sample <- function(x, M = 5, fit = FALSE, ...) {
 #'   providing a length-2 integer vector argument `plane` which defaults to
 #'   `1:2`.
 #'
-#' @return The [plot.prcomp_qts()] method does not return anything while the
-#'   [autoplot.prcomp_qts()] method returns a [ggplot2::ggplot] object.
+#' @return A [ggplot2::ggplot] object.
+#'
+#' @importFrom ggplot2 autoplot .data
+#' @export
+#' @examplesIf requireNamespace("ggplot2", quietly = TRUE)
+#' df <- as_qts_sample(vespa64$igp[1:16])
+#' res_pca <- prcomp(df)
+#'
+#' # Plot the data points in a PC plane
+#' # And color points according to a categorical variable
+#' p <- ggplot2::autoplot(res_pca, what = "scores")
+#' p + ggplot2::geom_point(ggplot2::aes(color = vespa64$V[1:16]))
+autoplot.prcomp_qts <- function(object, what = "PC1", ...) {
+  dots <- list(...)
+  if (substr(what, 1, 2) == "PC") {
+    component <- as.numeric(substr(what, 3, nchar(what)))
+    if ("original_space" %in% names(dots))
+      plot_tpca_component(object, component = component, original_space = dots$original_space)
+    else {
+      cli::cli_inform("The {.code original_space} boolean argument is not specified. Defaulting to {.field TRUE}.")
+      plot_tpca_component(object, component = component, original_space = TRUE)
+    }
+  } else if (what == "scores") {
+    if ("plane" %in% names(dots))
+      plot_tpca_scores(object, plane = dots$plane)
+    else {
+      cli::cli_inform("The {.code plane} length-2 integer vector argument is not specified. Defaulting to {.field 1:2}.")
+      plot_tpca_scores(object, plane = 1:2)
+    }
+  } else if (what == "variance") {
+    screeplot(object)
+  } else
+    cli::cli_abort("The {.arg what} argument should be either {.field scores} or {.field variance} or a principal component specified starting with {.field PC}.")
+}
+
+#' Plot for `prcomp_qts` objects
+#'
+#' This function creates a visualization of the results of the PCA applied on a
+#' sample of QTS **without** returning the plot data as an object.
+#'
+#' @param x An object of class `prcomp_qts` as produced by the
+#'   [prcomp.qts_sample()] method.
+#' @inheritParams autoplot.prcomp_qts
+#'
+#' @return No return value, called for side effects.
 #'
 #' @importFrom graphics plot
 #' @export
-#'
 #' @examples
 #' df <- as_qts_sample(vespa64$igp[1:16])
 #' res_pca <- prcomp(df)
@@ -121,40 +172,8 @@ prcomp.qts_sample <- function(x, M = 5, fit = FALSE, ...) {
 #'
 #' # You can plot the data points in a PC plane
 #' plot(res_pca, what = "scores")
-#'
-#' # You can color points according to a categorical variable
-#' if (requireNamespace("ggplot2", quietly = TRUE)) {
-#'   p <- ggplot2::autoplot(res_pca, what = "scores")
-#'   p + ggplot2::geom_point(ggplot2::aes(color = vespa64$V[1:16]))
-#' }
 plot.prcomp_qts <- function(x, what = "PC1", ...) {
   print(autoplot(x, what = what, ...))
-}
-
-#' @importFrom ggplot2 autoplot .data
-#' @export
-#' @rdname plot.prcomp_qts
-autoplot.prcomp_qts <- function(x, what = "PC1", ...) {
-  dots <- list(...)
-  if (substr(what, 1, 2) == "PC") {
-    component <- as.numeric(substr(what, 3, nchar(what)))
-    if ("original_space" %in% names(dots))
-      plot_tpca_component(x, component = component, original_space = dots$original_space)
-    else {
-      cli::cli_inform("The {.code original_space} boolean argument is not specified. Defaulting to {.field TRUE}.")
-      plot_tpca_component(x, component = component, original_space = TRUE)
-    }
-  } else if (what == "scores") {
-    if ("plane" %in% names(dots))
-      plot_tpca_scores(x, plane = dots$plane)
-    else {
-      cli::cli_inform("The {.code plane} length-2 integer vector argument is not specified. Defaulting to {.field 1:2}.")
-      plot_tpca_scores(x, plane = 1:2)
-    }
-  } else if (what == "variance") {
-    screeplot(x)
-  } else
-    cli::cli_abort("The {.arg what} argument should be either {.field scores} or {.field variance} or a principal component specified starting with {.field PC}.")
 }
 
 #' @importFrom stats screeplot
@@ -179,17 +198,17 @@ screeplot.prcomp_qts <- function(x, ...) {
 }
 
 plot_tpca_component <- function(tpca, component = 1, original_space = TRUE) {
-  plot_mean <- log_qts(tpca$mean_qts)
-  plot_cp <- log_qts(tpca$principal_qts[[component]])
+  plot_mean <- log(tpca$mean_qts)
+  plot_cp <- log(tpca$principal_qts[[component]])
   K <- stats::median(abs(tpca$tpca$scores[, component]))
   plot_lb <- plot_mean
   plot_lb[3:5] <- plot_lb[3:5] - K * plot_cp[3:5]
   plot_ub <- plot_mean
   plot_ub[3:5] <- plot_ub[3:5] + K * plot_cp[3:5]
   if (original_space) {
-    plot_mean <- exp_qts(plot_mean)
-    plot_lb <- exp_qts(plot_lb)
-    plot_ub <- exp_qts(plot_ub)
+    plot_mean <- exp(plot_mean)
+    plot_lb <- exp(plot_lb)
+    plot_ub <- exp(plot_ub)
   } else {
     plot_mean$w <- NULL
     plot_lb$w <- NULL

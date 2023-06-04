@@ -7,44 +7,41 @@
 #' @param x Either a numeric matrix of data, or an object that can be coerced to
 #'   such a matrix (such as a numeric vector or a data frame with all numeric
 #'   columns) or an object of class [qts_sample].
-#' @param k An integer value specifying the number of clusters to be look for.
+#' @param n_clusters An integer value specifying the number of clusters to be
+#'   look for.
 #' @param iter_max An integer value specifying the maximum number of iterations
 #'   for terminating the k-mean algorithm. Defaults to `10L`.
-#' @param nstart An integer value specifying the number of random restarts of
-#'   the algorithm. The higher `nstart`, the more robust the result. Defaults to
-#'   `1L`.
 #' @inheritParams stats::kmeans
-#' @param centroid A string specifying which type of centroid should be used
-#'   when applying kmeans on a QTS sample. Choices are `mean` and `medoid`.
-#'   Defaults to `mean`.
-#' @param dissimilarity A string specifying which type of dissimilarity should
-#'   be used when applying kmeans on a QTS sample. Choices are `l2` and
-#'   `pearson`. Defaults to `l2`.
-#' @param warping A string specifying which class of warping functions should be
-#'   used when applying kmeans on a QTS sample. Choices are `none`, `shift`,
-#'   `dilation` and `affine`. Defaults to `affine`.
+#' @inheritParams fdacluster::fdakmeans
 #'
-#' @return An object of class [`stats::kmeans`] if the input `x` is NOT of class
-#'   [`qts_sample`]. Otherwise, an object of class `kma_qts` which is
-#'   effectively a list with three components:
-#' - `qts_aligned`: An object of class [qts_sample] storing the sample of
+#' @return An object of class [`stats::kmeans`] or [`stats::hclust`] or
+#'   `dbscan_fast` if the input `x` is NOT of class [`qts_sample`]. Otherwise,
+#'   an object of class `qtsclust` which is effectively a list with four
+#'   components:
+#' - `qts_aligned`: An object of class [`qts_sample`] storing the sample of
 #' aligned QTS;
-#' - `qts_centers`: A list of objects of class [qts] representing the centers of
-#' the clusters;
-#' - `best_kma_result`: An object of class [fdacluster::kma] storing the results
-#' of the best k-mean alignment result among all initialization that were tried.
+#' - `qts_centers`: A list of objects of class [`qts`] representing the centers
+#' of the clusters;
+#' - `best_clustering`: An object of class [`fdacluster::caps`] storing the
+#' results of the best k-mean alignment result among all initialization that
+#' were tried.
+#' - `call_name`: A string storing the name of the function that was used to
+#' produce the clustering structure;
+#' - `call_args`: A list containing the exact arguments that were passed to
+#' the function `call_name` that produced this output.
+#'
 #'
 #' @export
 #' @examples
-#' res_kma <- kmeans(vespa64$igp, k = 2)
-kmeans <- function(x, k, iter_max = 10, nstart = 1, ...) {
+#' out <- kmeans(vespa64$igp[1:10], n_clusters = 2)
+kmeans <- function(x, n_clusters, ...) {
   UseMethod("kmeans")
 }
 
 #' @export
 #' @rdname kmeans
 kmeans.default <- function(x,
-                           k,
+                           n_clusters = 1,
                            iter_max = 10,
                            nstart = 1,
                            algorithm =  c("Hartigan-Wong", "Lloyd", "Forgy", "MacQueen"),
@@ -52,7 +49,7 @@ kmeans.default <- function(x,
                            ...) {
   stats::kmeans(
     x = x,
-    centers = k,
+    centers = n_clusters,
     iter.max = iter_max,
     nstart = nstart,
     algorithm = algorithm,
@@ -63,122 +60,111 @@ kmeans.default <- function(x,
 #' @export
 #' @rdname kmeans
 kmeans.qts_sample <-function(x,
-                             k = 1,
-                             iter_max = 10,
-                             nstart = 1,
-                             centroid = "mean",
-                             dissimilarity = "l2",
-                             warping = "affine",
+                             n_clusters = 1L,
+                             seeds = NULL,
+                             seeding_strategy = c("kmeans++", "exhaustive-kmeans++", "exhaustive", "hclust"),
+                             warping_class = c("affine", "dilation", "none", "shift", "srsf"),
+                             centroid_type = "mean",
+                             metric = c("l2", "pearson"),
+                             cluster_on_phase = FALSE,
                              ...) {
-  if (!is_qts_sample(x))
-    cli::cli_abort("The input argument {.arg x} should be of class {.cls qts_sample}.")
+  call <- rlang::call_match(defaults = TRUE)
+  call_args <- rlang::call_args(call)
+  call_args$seeding_strategy <- rlang::arg_match(seeding_strategy)
+  call_args$warping_class <- rlang::arg_match(warping_class)
+  call_args$metric <- rlang::arg_match(metric)
 
-  q_list <- purrr::map(x, log_qts)
-  q_list <- purrr::map(q_list, ~ rbind(.x$x, .x$y, .x$z))
-  t_list <- purrr::map(x, "time")
+  l <- prep_data(x)
 
-  # Prep data
-  n <- length(q_list)
-  d <- dim(q_list[[1]])[1]
-  p <- dim(q_list[[1]])[2]
-
-  if (is.null(t_list))
-    grid <- 0:(p-1)
-  else
-    grid <- matrix(nrow = n, ncol = p)
-
-  values <- array(dim = c(n, d, p))
-  for (i in 1:n) {
-    values[i, , ] <- q_list[[i]]
-    if (!is.null(t_list)) {
-      grid[i, ] <- t_list[[i]]
-    }
-  }
-
-  B <- choose(n, k)
-
-  if (nstart > B)
-    init <- utils::combn(n, k, simplify = FALSE)
-  else
-    init <- replicate(nstart, sample.int(n, k), simplify = FALSE)
-
-  .kma_with_multiple_restarts <- function(init_values) {
-    pb <- progressr::progressor(along = init_values)
-    furrr::future_map(init_values, ~ {
-      pb()
-      fdacluster::kma(
-        x = grid,
-        y = values,
-        seeds = .x,
-        n_clust = k,
-        center_method = centroid,
-        warping_method = warping,
-        dissimilarity_method = dissimilarity,
-        use_verbose = FALSE,
-        warping_options = c(0.1, 0.1),
-        use_fence = FALSE
-      )
-    }, .options = furrr::furrr_options(seed = TRUE))
-  }
-
-  solutions <- .kma_with_multiple_restarts(init)
-  wss_vector <- purrr::map_dbl(solutions, ~ sum(.x$final_dissimilarity))
-  opt <- solutions[[which.min(wss_vector)]]
-
-  centers <- purrr::map(1:opt$n_clust_final, ~ {
-    exp_qts(as_qts(tibble::tibble(
-      time = opt$x_centers_final[.x, ],
-      w    = 0,
-      x    = opt$y_centers_final[.x, 1, ],
-      y    = opt$y_centers_final[.x, 2, ],
-      z    = opt$y_centers_final[.x, 3, ]
-    )))
-  })
-
-  res <- list(
-    qts_aligned = as_qts_sample(purrr::imap(x, ~ {
-      .x$time <- opt$x_final[.y, ]
-      .x
-    })),
-    qts_centers = centers,
-    best_kma_result = opt
+  out <- fdacluster::fdakmeans(
+    x = l$grid,
+    y = l$values,
+    n_clusters = n_clusters,
+    seeds = seeds,
+    seeding_strategy = seeding_strategy,
+    warping_class = warping_class,
+    centroid_type = centroid_type,
+    metric = metric,
+    cluster_on_phase = cluster_on_phase
   )
 
-  class(res) <- "kma_qts"
+  res <- list(
+    qts_aligned = as_qts_sample(purrr::map(1:l$N, \(.id) {
+      .label <- out$memberships[.id]
+      exp(as_qts(tibble::tibble(
+        time = out$grids[.label, ],
+        w    = 0,
+        x    = out$aligned_curves[.id, 1, ],
+        y    = out$aligned_curves[.id, 2, ],
+        z    = out$aligned_curves[.id, 3, ]
+      )))
+    })),
+    qts_centers = purrr::map(1:out$n_clusters, \(.id) {
+      exp(as_qts(tibble::tibble(
+        time = out$grids[.id, ],
+        w    = 0,
+        x    = out$center_curves[.id, 1, ],
+        y    = out$center_curves[.id, 2, ],
+        z    = out$center_curves[.id, 3, ]
+      )))
+    }),
+    best_clustering = out,
+    call_name = rlang::call_name(call),
+    call_args = call_args
+  )
+
+  class(res) <- "qtsclust"
   res
 }
 
-#' QTS K-Means Visualization
+#' Plot for `qtsclust` objects
 #'
-#' @param x An object of class `kma_qts` as produced by the [kmeans()] function.
+#' This function creates a visualization of the clustering results obtained on a
+#' sample of QTS and returns the corresponding [ggplot2::ggplot] object which
+#' enable further customization of the plot.
+#'
+#' @param object An object of class `qtsclust` as produced by
+#'   [kmeans.qts_sample()] or [hclust.qts_sample()].
 #' @param ... Further arguments to be passed to other methods.
 #'
-#' @return The [plot.kma_qts()] method does not return anything while the
-#'   [autoplot.kma_qts()] method returns a [ggplot2::ggplot] object.
+#' @return A [ggplot2::ggplot] object.
+#'
+#' @importFrom ggplot2 autoplot .data
+#' @export
+#' @examplesIf requireNamespace("ggplot2", quietly = TRUE)
+#' out <- kmeans(vespa64$igp[1:10], n_clusters = 2)
+#' ggplot2::autoplot(out)
+autoplot.qtsclust <- function(object, ...) {
+  data <- as_qts_sample(c(object$qts_centers, object$qts_aligned))
+  n <- length(object$qts_aligned)
+  k <- length(object$qts_centers)
+  memb <- c(1:k, object$best_clustering$memberships)
+  high <- c(rep(TRUE, k), rep(FALSE, n))
+  fnm <- strsplit(object$call_name, split = '\\.')[[1]][1]
+  wcn <- object$call_args$warping_class
+  autoplot(data, memberships = memb, highlighted = high) +
+    ggplot2::labs(
+      title = cli::format_inline("Clustering structure obtained from {.fn {fnm}}"),
+      subtitle = cli::format_inline("Using {k} cluster{?s} and {wcn} warping functions")
+    )
+}
+
+#' Plot for `qtsclust` objects
+#'
+#' This function creates a visualization of the clustering results obtained on a
+#' sample of QTS **without** returning the plot data as an object.
+#'
+#' @param x An object of class `qtsclust` as produced by [kmeans.qts_sample()]
+#'   or [hclust.qts_sample()].
+#' @inheritParams autoplot.qtsclust
+#'
+#' @return No return value, called for side effects.
 #'
 #' @importFrom graphics plot
 #' @export
-#'
 #' @examples
-#' res_kma <- kmeans(vespa64$igp, k = 2, nstart = 1)
-#' plot(res_kma)
-#' ggplot2::autoplot(res_kma)
-plot.kma_qts <- function(x, ...) {
+#' out <- kmeans(vespa64$igp[1:10], n_clusters = 2)
+#' plot(out)
+plot.qtsclust <- function(x, ...) {
   print(autoplot(x, ...))
-}
-
-#' @importFrom ggplot2 autoplot .data
-#' @export
-#' @rdname plot.kma_qts
-autoplot.kma_qts <- function(x, ...) {
-  data <- as_qts_sample(c(x$qts_centers, x$qts_aligned))
-  n <- length(x$qts_aligned)
-  k <- length(x$qts_centers)
-  memb <- c(1:k, x$best_kma_result$labels)
-  high <- c(rep(TRUE, k), rep(FALSE, n))
-  autoplot(data, memberships = memb, highlighted = high) +
-    ggplot2::labs(
-      title = "K-Means Alignment Clustering Results",
-      subtitle = cli::pluralize("Using {k} cluster{?s}")
-    )
 }

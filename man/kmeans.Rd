@@ -6,11 +6,11 @@
 \alias{kmeans.qts_sample}
 \title{QTS K-Means Alignment Algorithm}
 \usage{
-kmeans(x, k, iter_max = 10, nstart = 1, ...)
+kmeans(x, n_clusters, ...)
 
 \method{kmeans}{default}(
   x,
-  k,
+  n_clusters = 1,
   iter_max = 10,
   nstart = 1,
   algorithm = c("Hartigan-Wong", "Lloyd", "Forgy", "MacQueen"),
@@ -20,12 +20,13 @@ kmeans(x, k, iter_max = 10, nstart = 1, ...)
 
 \method{kmeans}{qts_sample}(
   x,
-  k = 1,
-  iter_max = 10,
-  nstart = 1,
-  centroid = "mean",
-  dissimilarity = "l2",
-  warping = "affine",
+  n_clusters = 1L,
+  seeds = NULL,
+  seeding_strategy = c("kmeans++", "exhaustive-kmeans++", "exhaustive", "hclust"),
+  warping_class = c("affine", "dilation", "none", "shift", "srsf"),
+  centroid_type = "mean",
+  metric = c("l2", "pearson"),
+  cluster_on_phase = FALSE,
   ...
 )
 }
@@ -34,16 +35,16 @@ kmeans(x, k, iter_max = 10, nstart = 1, ...)
 such a matrix (such as a numeric vector or a data frame with all numeric
 columns) or an object of class \link{qts_sample}.}
 
-\item{k}{An integer value specifying the number of clusters to be look for.}
+\item{n_clusters}{An integer value specifying the number of clusters to be
+look for.}
+
+\item{...}{not used.}
 
 \item{iter_max}{An integer value specifying the maximum number of iterations
 for terminating the k-mean algorithm. Defaults to \code{10L}.}
 
-\item{nstart}{An integer value specifying the number of random restarts of
-the algorithm. The higher \code{nstart}, the more robust the result. Defaults to
-\code{1L}.}
-
-\item{...}{not used.}
+\item{nstart}{if \code{centers} is a number, how many random sets
+    should be chosen?}
 
 \item{algorithm}{character: may be abbreviated.  Note that
     \code{"Lloyd"} and \code{"Forgy"} are alternative names for one
@@ -54,29 +55,64 @@ the algorithm. The higher \code{nstart}, the more robust the result. Defaults to
     tracing information on the progress of the algorithm is
     produced.  Higher values may produce more tracing information.}
 
-\item{centroid}{A string specifying which type of centroid should be used
-when applying kmeans on a QTS sample. Choices are \code{mean} and \code{medoid}.
-Defaults to \code{mean}.}
+\item{seeds}{An integer value or vector specifying the indices of the initial
+centroids. If an integer vector, it is interpreted as the indices of the
+intial centroids and should therefore be of length \code{n_clusters}. If an
+integer value, it is interpreted as the index of the first initial centroid
+and subsequent centroids are chosen according to the k-means++ strategy. It
+can be \code{NULL} in which case the argument \code{seeding_strategy} is used to
+automatically provide suitable indices. Defaults to \code{NULL}.}
 
-\item{dissimilarity}{A string specifying which type of dissimilarity should
-be used when applying kmeans on a QTS sample. Choices are \code{l2} and
-\code{pearson}. Defaults to \code{l2}.}
+\item{seeding_strategy}{A character string specifying the strategy for
+choosing the initial centroids in case the argument \code{seeds} is set to
+\code{NULL}. Choices are
+\href{https://en.wikipedia.org/wiki/K-means\%2B\%2B}{\code{"kmeans++"}},
+\code{"exhaustive-kmeans++"} which performs an exhaustive search over the choice
+of the first centroid, \code{"exhaustive"} which tries on all combinations of
+initial centroids or \code{"hclust"} which first performs hierarchical
+clustering using Ward's linkage criterion to identify initial centroids.
+Defaults to \code{"kmeans++"}, which is the fastest strategy.}
 
-\item{warping}{A string specifying which class of warping functions should be
-used when applying kmeans on a QTS sample. Choices are \code{none}, \code{shift},
-\code{dilation} and \code{affine}. Defaults to \code{affine}.}
+\item{warping_class}{A string specifying the warping class Choices are
+\code{"affine"}, \code{"dilation"}, \code{"none"}, \code{"shift"} or \code{"srsf"}. Defaults to
+\code{"affine"}. The SRSF class is the only class which is boundary-preserving.}
+
+\item{centroid_type}{A string specifying the type of centroid to compute.
+Choices are \code{"mean"}, \code{"medoid"}, \code{"lowess"} or \code{"poly"}. Defaults to
+\code{"mean"}. If LOWESS appproximation is chosen, the user can append an
+integer between 0 and 100 as in \code{"lowess20"}. This number will be used as
+the smoother span. This gives the proportion of points in the plot which
+influence the smooth at each value. Larger values give more smoothness. The
+default value is 10\%. If polynomial approximation is chosen, the user can
+append an positive integer as in \code{"poly3"}. This number will be used as the
+degree of the polynomial model. The default value is \code{4L}.}
+
+\item{metric}{A string specifying the metric used to compare curves. Choices
+are \code{"l2"} or \code{"pearson"}. Defaults to \code{"l2"}. Used only when
+\code{warping_class != "srsf"}. For the boundary-preserving warping class, the
+L2 distance between the SRSFs of the original curves is used.}
+
+\item{cluster_on_phase}{A boolean specifying whether clustering should be
+based on phase variation or amplitude variation. Defaults to \code{FALSE} which
+implies amplitude variation.}
 }
 \value{
-An object of class \code{\link[stats:kmeans]{stats::kmeans}} if the input \code{x} is NOT of class
-\code{\link{qts_sample}}. Otherwise, an object of class \code{kma_qts} which is
-effectively a list with three components:
+An object of class \code{\link[stats:kmeans]{stats::kmeans}} or \code{\link[stats:hclust]{stats::hclust}} or
+\code{dbscan_fast} if the input \code{x} is NOT of class \code{\link{qts_sample}}. Otherwise,
+an object of class \code{qtsclust} which is effectively a list with four
+components:
 \itemize{
-\item \code{qts_aligned}: An object of class \link{qts_sample} storing the sample of
+\item \code{qts_aligned}: An object of class \code{\link{qts_sample}} storing the sample of
 aligned QTS;
-\item \code{qts_centers}: A list of objects of class \link{qts} representing the centers of
-the clusters;
-\item \code{best_kma_result}: An object of class \link[fdacluster:kma]{fdacluster::kma} storing the results
-of the best k-mean alignment result among all initialization that were tried.
+\item \code{qts_centers}: A list of objects of class \code{\link{qts}} representing the centers
+of the clusters;
+\item \code{best_clustering}: An object of class \code{\link[fdacluster:caps]{fdacluster::caps}} storing the
+results of the best k-mean alignment result among all initialization that
+were tried.
+\item \code{call_name}: A string storing the name of the function that was used to
+produce the clustering structure;
+\item \code{call_args}: A list containing the exact arguments that were passed to
+the function \code{call_name} that produced this output.
 }
 }
 \description{
@@ -85,5 +121,5 @@ k-means alignment algorithm for jointly clustering and aligning the input
 QTS.
 }
 \examples{
-res_kma <- kmeans(vespa64$igp, k = 2)
+out <- kmeans(vespa64$igp[1:10], n_clusters = 2)
 }

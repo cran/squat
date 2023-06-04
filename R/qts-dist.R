@@ -1,19 +1,83 @@
-#' Distance Matrix for Quaternion Time Series Samples
+#' QTS Distance Matrix Computation
 #'
-#' @param qts_list An object of class [qts_sample].
-#' @param normalize_distance A boolean specifying whether to compute normalized
-#'   distance between QTS. Please note that not all step patterns are
-#'   normalizable. Defaults to `FALSE`.
-#' @param labels A character vector specifying labels for each QTS. Defaults to
-#'   `NULL` which uses row numbers as labels.
-#' @inheritParams DTW
+#' This function massages an input sample of quaternion time series to turn it
+#' into a pairwise distance matrix.
 #'
-#' @return A [stats::dist] object storing the distance matrix between QTS in a
-#'   sample via DTW.
+#' @param x A numeric matrix, data frame, [stats::dist] object or object of
+#'   class [qts_sample] specifying the sample on which to compute the pairwise
+#'   distance matrix.
+#' @param metric A character string specifying the distance measure to be used.
+#'   This must be one of `"euclidean"`, `"maximum"`, `"manhattan"`,
+#'   `"canberra"`, `"binary"` or `"minkowski"` if `x` is not a QTS sample.
+#'   Otherwise, it must be one of `"l2"`, `"pearson"` or `"dtw"`.
+#' @inheritParams stats::dist
+#' @inheritParams fdacluster::fdadist
+#' @param ... not used.
+#'
+#' @return An object of class [stats::dist].
+#'
 #' @export
-#'
 #' @examples
-#' D <- distDTW(vespa64$igp)
+#' D <- dist(vespa64$igp[1:5])
+dist <- function(x, metric, ...) {
+  UseMethod("dist")
+}
+
+#' @export
+#' @rdname dist
+dist.default <- function(x,
+                         metric = c("euclidean", "maximum", "manhattan", "canberra", "binary", "minkowski"),
+                         diag = FALSE,
+                         upper = FALSE,
+                         p =  2,
+                         ...) {
+  metric <- match.arg(metric, choices = c(
+    "euclidean", "maximum", "manhattan", "canberra", "binary", "minkowski"
+  ))
+  stats::dist(
+    x = x,
+    method = metric,
+    diag = diag,
+    upper = upper,
+    p = p
+  )
+}
+
+#' @export
+#' @rdname dist
+dist.qts_sample <-function(x,
+                           metric = c("l2", "pearson", "dtw"),
+                           warping_class = c("affine", "dilation", "none", "shift", "srsf"),
+                           cluster_on_phase = FALSE,
+                           labels = NULL,
+                           ...) {
+  metric <- match.arg(metric, choices = c(
+    c("l2", "pearson", "dtw")
+  ))
+
+  if (metric == "dtw") {
+    return(distDTW(
+      qts_list = x,
+      normalize_distance = TRUE,
+      labels = labels,
+      resample = FALSE,
+      disable_normalization = TRUE,
+      step_pattern = dtw::symmetric2
+    ))
+  }
+
+  l <- prep_data(x)
+
+  fdacluster::fdadist(
+    x = l$grid,
+    y = l$values,
+    warping_class = warping_class,
+    metric = metric,
+    cluster_on_phase = cluster_on_phase,
+    labels = labels
+  )
+}
+
 distDTW <- function(qts_list,
                     normalize_distance = TRUE,
                     labels = NULL,
