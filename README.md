@@ -24,8 +24,9 @@ methods for QTS samples are currently:
 - [`mean()`](https://lmjl-alea.github.io/squat/reference/mean.qts_sample.html),
 - [`median()`](https://lmjl-alea.github.io/squat/reference/median.qts_sample.html),
 - distance matrix computation via
-  [`distDTW()`](https://lmjl-alea.github.io/squat/reference/distDTW.html)
-  (i.e. for now we use the dynamic time warping),
+  [`dist()`](https://lmjl-alea.github.io/squat/reference/dist.html)
+  including the possibility of separating amplitude and phase
+  variability,
 - tangent principal component analysis via
   [`prcomp()`](https://lmjl-alea.github.io/squat/reference/prcomp.qts_sample.html),
 - k-means with optional alignment via
@@ -56,8 +57,8 @@ library(squat)
 First, let us visualize the sample of QTS from the `vespa64` dataset
 included in the package. The package provides two ways of doing this:
 either via a static plot or via an animated one (which uses
-[**gganimate**](https://gganimate.com) behind the scences and will
-prompt you to install it in case you have not already).
+[**gganimate**](https://gganimate.com) behind the scenes and will prompt
+you to install it in case you have not already).
 
 Here is the static version:
 
@@ -77,8 +78,6 @@ p <- ggplot2::autoplot(vespa64$igp, with_animation = TRUE)
 gganimate::anim_save("man/figures/README-animated-plot.gif", p)
 ```
 
-![](man/figures/README-animated-plot.gif)
-
 You can compute the geometric mean of the sample and append it to the
 sample for visualization:
 
@@ -93,8 +92,10 @@ plot(sample_and_mean, highlighted = c(rep(FALSE, 64), TRUE))
 You can compute the pairwise distance matrix (based on the DTW for now):
 
 ``` r
-D <- distDTW(vespa64$igp)
-C <- exp(-D / (sqrt(2) * 4 * bw.SJ(D))) |> 
+D <- dist(vespa64$igp, metric = "l2", warping_class = "srsf")
+C <- exp(-D / (sqrt(2) * sd(D)))
+C <- (C - min(C)) / diff(range(C))
+C <- C |> 
   as.matrix() |> 
   corrr::as_cordf()
 corrr::network_plot(C)
@@ -131,7 +132,14 @@ screeplot(tpca)
 You can finally perform a k-means clustering and visualize it:
 
 ``` r
-km <- kmeans(vespa64$igp, k = 2)
+km <- kmeans(vespa64$igp, n_clusters = 2, warping_class = "srsf")
+#> ℹ Computing initial centroids using kmeans++ strategy...
+#> ℹ Running iteration 1...
+#> ℹ ----> Alignment step
+#> ℹ ----> Assignment step
+#> ℹ ----> Normalisation step
+#> ℹ ----> Template identification step
+#> ℹ Consolidating output...
 plot(km)
 ```
 
