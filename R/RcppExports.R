@@ -53,8 +53,12 @@ moving_average_qts_impl <- function(qts, window_size) {
     .Call(`_squat_moving_average_qts_impl`, qts, window_size)
 }
 
-left_multiply_qts_impl <- function(qts, lhs, invert = FALSE) {
-    .Call(`_squat_left_multiply_qts_impl`, qts, lhs, invert)
+multiply_qts_impl <- function(qts_left, qts_right) {
+    .Call(`_squat_multiply_qts_impl`, qts_left, qts_right)
+}
+
+inverse_qts_impl <- function(qts) {
+    .Call(`_squat_inverse_qts_impl`, qts)
 }
 
 GetCostMatrix <- function(qts1, qts2) {
@@ -85,6 +89,10 @@ qts2avts_impl <- function(qts, body_frame = FALSE) {
     .Call(`_squat_qts2avts_impl`, qts, body_frame)
 }
 
+qts2aats_impl <- function(qts) {
+    .Call(`_squat_qts2aats_impl`, qts)
+}
+
 gmean <- function(quaternionSample, maxIterations = 2000L, maxEpsilon = 1.0e-5) {
     .Call(`_squat_gmean`, quaternionSample, maxIterations, maxEpsilon)
 }
@@ -95,5 +103,5 @@ gmedian <- function(quaternionSample, maxIterations = 2000L, maxEpsilon = 1.0e-5
 
 # Register entry points for exported C++ functions
 methods::setLoadAction(function(ns) {
-    .Call('_squat_RcppExport_registerCCallable', PACKAGE = 'squat')
+    .Call(`_squat_RcppExport_registerCCallable`)
 })

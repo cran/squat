@@ -1,3 +1,25 @@
+# squat 0.3.0
+
+## New features
+
+* Added `S3` specialization of the `stats::predict()` function for `prcomp_qts` 
+objects.
+* Added function `qts2aats()` which allows to switch from quaternion to 
+axis-angle representation of rotations.
+* Added usual operations `+`, `-`, `*` and `inverse_qts()` for quaternion time 
+series using the [Eigen](https://eigen.tuxfamily.org/index.php?title=Main_Page) 
+library.
+
+## Small improvements
+
+* Make sure quaternion geodesic mean is not flipped.
+* Fix issues in PCA:
+  - avoid numerical overflows due to bad choice of `k` in `gam()`;
+  - improved documentation;
+  - Use same number of basis functions in uni- and multivariate decompositions.
+* Updated GHA scripts and `README`.
+* Fix bug related to Rcpp following RcppCore/Rcpp#1287.
+
 # squat 0.2.1
 
 * Add `use_fence` robustification option;
